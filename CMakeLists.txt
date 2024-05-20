@@ -16,11 +16,16 @@ endif()
 # 第一个 target: demo
 add_executable(ompl-demo 
                   ompl-demo/ompl-demo.cpp
+                  bivstar/BIVstar.cpp
+                  bivstar/src/ImplicitGraph.cpp
+                  bivstar/src/SearchQueue.cpp
+                  bivstar/src/Vertex.cpp
 )
 
 target_include_directories(ompl-demo
                             PRIVATE
                             ${OMPL_INCLUDE_DIRS}
+                            ${CMAKE_HOME_DIRECTORY}/bivstar
 )
 
 target_link_libraries(ompl-demo
