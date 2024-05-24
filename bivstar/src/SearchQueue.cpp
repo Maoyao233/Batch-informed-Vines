@@ -46,6 +46,7 @@
 
 // OMPL:
 // For OMPL_INFORM et al.
+#include "BIVstar.h"
 #include "ompl/util/Console.h"
 // For exceptions:
 #include "ompl/util/Exception.h"
@@ -463,6 +464,8 @@ namespace ompl
                 // Get the neighbouring samples.
                 VertexPtrVector neighbourSamples;
                 graphPtr_->nearestSamples(vertex, &neighbourSamples);
+
+                graphPtr_->updateRelation();
 
                 // Add all outgoing edges to neighbouring vertices and samples.
                 this->enqueueEdges(vertex, neighbourSamples);

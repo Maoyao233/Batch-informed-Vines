@@ -221,37 +221,6 @@ namespace ompl
 
                 // Get the measure of the problem
                 prunedMeasure_ = Planner::si_->getSpaceMeasure();
-
-                // If the planner is default named, we change it:
-                if (!graphPtr_->getUseKNearest() && Planner::getName() == "kBIVstar")
-                {
-                    // It's current the default k-nearest BIT* name, and we're toggling, so set to the default r-disc
-                    OMPL_WARN("BIT*: An r-disc version of BIT* can not be named 'kBIVstar', as this name is reserved "
-                              "for the k-nearest version. Changing the name to 'BIVstar'.");
-                    Planner::setName("BIVstar");
-                }
-                else if (graphPtr_->getUseKNearest() && Planner::getName() == "BIVstar")
-                {
-                    // It's current the default r-disc BIT* name, and we're toggling, so set to the default k-nearest
-                    OMPL_WARN("BIT*: A k-nearest version of BIT* can not be named 'BIVstar', as this name is reserved "
-                              "for the r-disc version. Changing the name to 'kBIVstar'.");
-                    Planner::setName("kBIVstar");
-                }
-                else if (!graphPtr_->getUseKNearest() && Planner::getName() == "kABIVstar")
-                {
-                    // It's current the default k-nearest ABIT* name, and we're toggling, so set to the default r-disc
-                    OMPL_WARN("ABIT*: An r-disc version of ABIT* can not be named 'kABIVstar', as this name is "
-                              "reserved for the k-nearest version. Changing the name to 'ABIVstar'.");
-                    Planner::setName("ABIVstar");
-                }
-                else if (graphPtr_->getUseKNearest() && Planner::getName() == "ABIVstar")
-                {
-                    // It's current the default r-disc ABIT* name, and we're toggling, so set to the default k-nearest
-                    OMPL_WARN("ABIT*: A k-nearest version of ABIT* can not be named 'ABIVstar', as this name is "
-                              "reserved for the r-disc version. Changing the name to 'kABIVstar'.");
-                    Planner::setName("kABIVstar");
-                }
-                // It's not default named, don't change it
             }
             else
             {
@@ -311,8 +280,6 @@ namespace ompl
             // No else
 
             OMPL_INFORM("%s: Searching for a solution to the given planning problem.", Planner::getName().c_str());
-
-            check_vine_ = false;
 
             // Reset the manual stop to the iteration loop:
             stopLoop_ = false;
@@ -487,8 +454,8 @@ namespace ompl
             // Keep track of how many iterations we've performed.
             ++numIterations_;
 
-            // If the search is done or the queue is empty, we need to populate the queue.
-            if (isSearchDone_ || queuePtr_->isEmpty())
+            // If there's no need to RRV expand, and the search is done or the queue is empty, we need to populate the queue.
+            if (graphPtr_->climbDirEmpty() && (isSearchDone_ || queuePtr_->isEmpty()))
             {
                 // Check whether we've exhausted the current approximation.
                 if (isFinalSearchOnBatch_ || !hasExactSolution_)
@@ -533,9 +500,9 @@ namespace ompl
 
                 isSearchDone_ = false;
             }
-            else if (false) 
+            else if (isSearchDone_ || queuePtr_->isEmpty()) 
             {
-                
+                graphPtr_->makeRRVExtend(bestCost_);
             }
             else
             {
@@ -1162,48 +1129,6 @@ namespace ompl
         unsigned int BIVstar::getSamplesPerBatch() const
         {
             return samplesPerBatch_;
-        }
-
-        void BIVstar::setUseKNearest(bool useKNearest)
-        {
-            // Store
-            graphPtr_->setUseKNearest(useKNearest);
-
-            // If the planner is default named, we change it:
-            if (!graphPtr_->getUseKNearest() && Planner::getName() == "kBIVstar")
-            {
-                // It's current the default k-nearest BIT* name, and we're toggling, so set to the default r-disc
-                OMPL_WARN("BIT*: An r-disc version of BIT* can not be named 'kBIVstar', as this name is reserved for "
-                          "the k-nearest version. Changing the name to 'BIVstar'.");
-                Planner::setName("BIVstar");
-            }
-            else if (graphPtr_->getUseKNearest() && Planner::getName() == "BIVstar")
-            {
-                // It's current the default r-disc BIT* name, and we're toggling, so set to the default k-nearest
-                OMPL_WARN("BIT*: A k-nearest version of BIT* can not be named 'BIVstar', as this name is reserved for "
-                          "the r-disc version. Changing the name to 'kBIVstar'.");
-                Planner::setName("kBIVstar");
-            }
-            else if (!graphPtr_->getUseKNearest() && Planner::getName() == "kABIVstar")
-            {
-                // It's current the default k-nearest ABIT* name, and we're toggling, so set to the default r-disc
-                OMPL_WARN("ABIT*: An r-disc version of ABIT* can not be named 'kABIVstar', as this name is reserved "
-                          "for the k-nearest version. Changing the name to 'ABIVstar'.");
-                Planner::setName("ABIVstar");
-            }
-            else if (graphPtr_->getUseKNearest() && Planner::getName() == "ABIVstar")
-            {
-                // It's current the default r-disc ABIT* name, and we're toggling, so set to the default k-nearest
-                OMPL_WARN("ABIT*: A k-nearest version of ABIT* can not be named 'ABIVstar', as this name is reserved "
-                          "for the r-disc version. Changing the name to 'kABIVstar'.");
-                Planner::setName("kABIVstar");
-            }
-            // It's not default named, don't change it
-        }
-
-        bool BIVstar::getUseKNearest() const
-        {
-            return graphPtr_->getUseKNearest();
         }
 
         void BIVstar::setStrictQueueOrdering(bool /* beStrict */)

@@ -39,6 +39,7 @@
 
 // STL/Boost:
 // For std::move
+#include <cstddef>
 #include <utility>
 // For smart pointers
 #include <memory>
@@ -49,6 +50,12 @@
 
 // OMPL:
 // For OMPL_INFORM et al.
+#include "BIVstar.h"
+#include "Eigen/src/Core/Matrix.h"
+#include "ompl/base/Cost.h"
+#include "ompl/base/ScopedState.h"
+#include "ompl/base/State.h"
+#include "ompl/base/spaces/RealVectorStateSpace.h"
 #include "ompl/util/Console.h"
 // For exceptions:
 #include "ompl/util/Exception.h"
@@ -58,6 +65,10 @@
 #include "ompl/util/RandomNumbers.h"
 // For geometric equations like unitNBallMeasure
 #include "ompl/util/GeometricEquations.h"
+
+// Eigen
+// For PCA
+#include <Eigen/Dense>
 
 // BIT*:
 // A collection of common helper functions
@@ -176,13 +187,6 @@ namespace ompl
             }
             // No else, finite problem dimension
 
-            // Finally initialize the nearestNeighbour terms:
-            // Calculate the k-nearest constant
-            k_rgg_ = this->calculateMinimumRggK();
-
-            // Make the initial k all vertices:
-            k_ = startVertices_.size() + goalVertices_.size();
-
             // Make the initial r infinity
             r_ = std::numeric_limits<double>::infinity();
         }
@@ -225,8 +229,6 @@ namespace ompl
             numNewSamplesInCurrentBatch_ = 0u;
             numUniformStates_ = 0u;
             r_ = 0.0;
-            k_rgg_ = 0.0;  // This is a double for better rounding later
-            k_ = 0u;
 
             approximationMeasure_ = 0.0;
             minCost_ = ompl::base::Cost(std::numeric_limits<double>::infinity());
@@ -250,7 +252,6 @@ namespace ompl
             // The various convenience pointers:
             // DO NOT reset the parameters:
             // rewireFactor_
-            // useKNearest_
             // useJustInTimeSampling_
             // dropSamplesOnPrune_
             // findApprox_
@@ -282,6 +283,39 @@ namespace ompl
             return this->distance(vertices.first, vertices.second);
         }
 
+        void BIVstar::ImplicitGraph::updateRelation()
+        {
+            VertexPtrVector data;
+            samples_->list(data);
+
+            for (const auto &vertex : data)
+            {
+                std::vector<std::shared_ptr<Vertex>> climb_set;
+                for (auto &[obs_vertex, relation] : climb_dict_)
+                {
+                    if (relation.climbed)
+                    {
+                        continue;
+                    }
+                    auto dist = distance(vertex, obs_vertex);
+                    if (dist > climb_distance_threshold_)
+                    {
+                        continue;
+                    }
+                    if (relation.distance > dist)
+                    {
+                        relation.distance = dist;
+                        relation.belong = vertex;
+                        climb_set.push_back(obs_vertex);
+                    }
+                }
+                if (!climb_set.empty())
+                {
+                    climb_dir_[vertex] = std::move(climb_set);
+                }
+            }
+        }
+
         void BIVstar::ImplicitGraph::nearestSamples(const VertexPtr &vertex, VertexPtrVector *neighbourSamples)
         {
             ASSERT_SETUP
@@ -292,14 +326,7 @@ namespace ompl
             // Keep track of how many times we've requested nearest neighbours.
             ++numNearestNeighbours_;
 
-            if (useKNearest_)
-            {
-                samples_->nearestK(vertex, k_, *neighbourSamples);
-            }
-            else
-            {
-                samples_->nearestR(vertex, r_, *neighbourSamples);
-            }
+            samples_->nearestR(vertex, r_, *neighbourSamples);
         }
 
         void BIVstar::ImplicitGraph::getGraphAsPlannerData(ompl::base::PlannerData &data) const
@@ -578,6 +605,7 @@ namespace ompl
                     // There is a start and goal, allocate
                     sampler_ = costHelpPtr_->getOptObj()->allocInformedStateSampler(
                         problemDefinition_, std::numeric_limits<unsigned int>::max());
+                    local_sampler_ = spaceInformation_->allocStateSampler();
                 }
                 // No else, this will get allocated when we get the updated start/goal.
 
@@ -621,7 +649,7 @@ namespace ompl
             // And there are no longer and recycled samples.
             recycledSamples_.clear();
 
-            std::erase_if(climb_dict_, [](auto p){return p.second.climbed;});
+            std::erase_if(climb_dict_, [](auto p) { return p.second.climbed; });
 
             // Increment the approximation id.
             ++(*approximationId_);
@@ -1344,14 +1372,7 @@ namespace ompl
             }
 
             // Now update the appropriate term
-            if (useKNearest_)
-            {
-                k_ = this->calculateK(numUniformStates);
-            }
-            else
-            {
-                r_ = this->calculateR(numUniformStates);
-            }
+            this->calculateR(numUniformStates);
         }
 
         std::size_t BIVstar::ImplicitGraph::computeNumberOfSamplesInInformedSet() const
@@ -1374,12 +1395,6 @@ namespace ompl
             // Calculate the term and return.
             return rewireFactor_ * this->calculateMinimumRggR() *
                    std::pow(std::log(graphCardinality) / graphCardinality, 1.0 / stateDimension);
-        }
-
-        unsigned int BIVstar::ImplicitGraph::calculateK(unsigned int numUniformSamples) const
-        {
-            // Calculate the term and return
-            return std::ceil(rewireFactor_ * k_rgg_ * std::log(static_cast<double>(numUniformSamples)));
         }
 
         double BIVstar::ImplicitGraph::calculateMinimumRggR() const
@@ -1417,16 +1432,6 @@ namespace ompl
                                     unitNBallMeasure(si_->getStateDimension())),
                             1.0 / dimDbl);
             */
-        }
-
-        double BIVstar::ImplicitGraph::calculateMinimumRggK() const
-        {
-            // The dimension cast as a double for readibility.
-            auto stateDimension = static_cast<double>(spaceInformation_->getStateDimension());
-
-            // Calculate the term and return.
-            return boost::math::constants::e<double>() +
-                   (boost::math::constants::e<double>() / stateDimension);  // RRG k-nearest
         }
 
         void BIVstar::ImplicitGraph::assertSetup() const
@@ -1507,25 +1512,8 @@ namespace ompl
             return closestDistanceToGoal_;
         }
 
-        unsigned int BIVstar::ImplicitGraph::getConnectivityK() const
-        {
-#ifdef BIVSTAR_DEBUG
-            if (!useKNearest_)
-            {
-                throw ompl::Exception("Using an r-disc graph.");
-            }
-#endif  // BIVSTAR_DEBUG
-            return k_;
-        }
-
         double BIVstar::ImplicitGraph::getConnectivityR() const
         {
-#ifdef BIVSTAR_DEBUG
-            if (useKNearest_)
-            {
-                throw ompl::Exception("Using a k-nearest graph.");
-            }
-#endif  // BIVSTAR_DEBUG
             return r_;
         }
 
@@ -1534,6 +1522,99 @@ namespace ompl
             VertexPtrVector samples;
             samples_->list(samples);
             return samples;
+        }
+
+        void BIVstar::ImplicitGraph::makeRRVExtend(base::Cost bestCost)
+        {
+            auto best_node_handle = popBestNodeInClimbDir();
+            const auto &vine_node = best_node_handle.key();
+            const auto &vine_rand_nodes = best_node_handle.mapped();
+
+            if (costHelpPtr_->isCostWorseThan(
+                    costHelpPtr_->combineCosts(vine_node->getCost(), costHelpPtr_->costToComeHeuristic(vine_node)),
+                    bestCost))
+            {
+                return;
+            }
+
+            std::vector<std::shared_ptr<Vertex>> ready_to_climb;
+
+            for (auto &&vine_rand : vine_rand_nodes)
+            {
+                if (auto &rel = climb_dict_[vine_node]; !rel.climbed && rel.belong == vine_node)
+                {
+                    rel.climbed = true;
+                    ready_to_climb.push_back(vine_rand);
+                }
+            }
+
+            if (!ready_to_climb.empty())
+            {
+                return;
+            }
+
+            constexpr int sample_num = 500;
+
+            std::vector<base::ScopedStatePtr> free_states, obs_states;
+
+            for (int i = 0; i < sample_num; i++)
+            {
+                base::ScopedStatePtr sample_scoped_state = std::make_shared<base::ScopedState<>>(spaceInformation_);
+                local_sampler_->sampleUniformNear(sample_scoped_state->get(), vine_node->state(),
+                                                  climb_distance_threshold_);
+
+                if (spaceInformation_->isValid(sample_scoped_state->get()))
+                {
+                    free_states.push_back(std::move(sample_scoped_state));
+                }
+                else
+                {
+                    obs_states.push_back(std::move(sample_scoped_state));
+                }
+            }
+            // in case obs could not be PCA
+            if (obs_states.size() <= 1)
+            {
+                return;
+            }
+
+            const size_t ndim = spaceInformation_->getStateSpace()->getDimension();
+
+            Eigen::MatrixXd free_states_matrix{free_states.size(), ndim},
+                obs_states_matrix{obs_states.size(), ndim};
+
+            for (size_t i = 0; i < free_states.size(); i++) {
+                auto* state = free_states[i]->get();
+                for (size_t j = 0; j < ndim; j++) {
+                    free_states_matrix(i, j) = static_cast<const ompl::base::RealVectorStateSpace::StateType*>(state)->operator[](j);
+                }
+            }
+
+            for (size_t i = 0; i < obs_states.size(); i++) {
+                auto* state = obs_states[i]->get();
+                for (size_t j = 0; j < ndim; j++) {
+                    obs_states_matrix(i, j) = static_cast<const ompl::base::RealVectorStateSpace::StateType*>(state)->operator[](j);
+                }
+            }
+
+            Eigen::MatrixXd q_rands_matrix{ready_to_climb.size(), ndim};
+            for (size_t i = 0; i < ready_to_climb.size(); i++)
+            {
+                auto* state = ready_to_climb[i]->state();
+                for (size_t j = 0; j < ndim; j++) {
+                    obs_states_matrix(i, j) = static_cast<const ompl::base::RealVectorStateSpace::StateType*>(state)->operator[](j);
+                }
+            }
+
+            obs_states_matrix.rowwise() -= obs_states_matrix.colwise().mean();
+            Eigen::MatrixXd cov = (obs_states_matrix.adjoint() * obs_states_matrix) / (obs_states_matrix.rows() - 1);
+
+            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver{cov};
+            if (solver.info() != Eigen::Success) {
+                OMPL_ERROR("Failed to finish PCA!");
+                return;
+            }
+            // To be finished
         }
 
         void BIVstar::ImplicitGraph::setRewireFactor(double rewireFactor)
@@ -1554,57 +1635,19 @@ namespace ompl
             return rewireFactor_;
         }
 
-        void BIVstar::ImplicitGraph::setUseKNearest(bool useKNearest)
-        {
-            // Assure that we're not trying to enable k-nearest with JIT sampling already on
-            if (useKNearest && useJustInTimeSampling_)
-            {
-                OMPL_WARN("%s (ImplicitGraph): The k-nearest variant of BIT* cannot be used with JIT sampling, "
-                          "continuing to use the r-disc variant.",
-                          nameFunc_().c_str());
-            }
-            else
-            {
-                // Store
-                useKNearest_ = useKNearest;
-
-                // Check if there's things to update
-                if (isSetup_)
-                {
-                    // Calculate the current term:
-                    this->updateNearestTerms();
-                }
-            }
-        }
-
-        bool BIVstar::ImplicitGraph::getUseKNearest() const
-        {
-            return useKNearest_;
-        }
-
         void BIVstar::ImplicitGraph::setJustInTimeSampling(bool useJit)
         {
-            // Assure that we're not trying to enable k-nearest with JIT sampling already on
-            if (useKNearest_ && useJit)
-            {
-                OMPL_WARN("%s (ImplicitGraph): Just-in-time sampling cannot be used with the k-nearest variant of "
-                          "BIT*, continuing to use regular sampling.",
-                          nameFunc_().c_str());
-            }
-            else
-            {
-                // Store
-                useJustInTimeSampling_ = useJit;
+            // Store
+            useJustInTimeSampling_ = useJit;
 
-                // Announce limitation:
-                if (useJit)
-                {
-                    OMPL_INFORM("%s (ImplicitGraph): Just-in-time sampling is currently only implemented for problems "
-                                "seeking to minimize path-length.",
-                                nameFunc_().c_str());
-                }
-                // No else
+            // Announce limitation:
+            if (useJit)
+            {
+                OMPL_INFORM("%s (ImplicitGraph): Just-in-time sampling is currently only implemented for problems "
+                            "seeking to minimize path-length.",
+                            nameFunc_().c_str());
             }
+            // No else
         }
 
         bool BIVstar::ImplicitGraph::getJustInTimeSampling() const

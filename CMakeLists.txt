@@ -9,8 +9,14 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(ompl 1.6 REQUIRED)
 
+find_package(Eigen3 REQUIRED)
+
 if(${OMPL_FOUND})
-    message("Found OMPL v${OMPL_VERSION}")
+    message(STATUS "Found OMPL v${OMPL_VERSION}")
+endif()
+
+if(${Eigen3_FOUND})
+    message(STATUS "Found Eigen v${Eigen3_VERSION}")
 endif()
 
 # 第一个 target: demo
@@ -25,8 +31,10 @@ add_executable(ompl-demo
 target_include_directories(ompl-demo
                             PRIVATE
                             ${OMPL_INCLUDE_DIRS}
+                            ${Eigen_INCLUDE_DIRS}
                             ${CMAKE_HOME_DIRECTORY}/bivstar
 )
+
 
 target_link_libraries(ompl-demo
                         PRIVATE

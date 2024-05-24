@@ -196,6 +196,7 @@ namespace ompl
              * vertices to expand. */
             bool isEmpty();
 
+
             /** \brief Get a copy of the edge queue. This is expensive and is only meant for animations/debugging. */
             void getEdges(VertexConstPtrPairVector *edgeQueue);
 

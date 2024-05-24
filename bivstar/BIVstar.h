@@ -37,6 +37,7 @@
 #ifndef OMPL_GEOMETRIC_PLANNERS_INFORMEDTREES_BIVSTAR_
 #define OMPL_GEOMETRIC_PLANNERS_INFORMEDTREES_BIVSTAR_
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -607,8 +608,8 @@ private:
   bool check_vine_{false};
 
   struct Relation {
-    Vertex* belong{nullptr};
-    base::Cost distance{std::numeric_limits<double>::infinity()};
+    std::shared_ptr<Vertex> belong{nullptr};
+    double distance{std::numeric_limits<double>::infinity()};
     bool climbed{false};
   };
 }; // class BIVstar

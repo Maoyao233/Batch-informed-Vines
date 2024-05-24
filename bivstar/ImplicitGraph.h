@@ -40,6 +40,10 @@
 #include <unordered_map>
 #include "ompl/base/Cost.h"
 #include "ompl/base/OptimizationObjective.h"
+#include "ompl/base/ProblemDefinition.h"
+#include "ompl/base/SpaceInformation.h"
+#include "ompl/base/StateSampler.h"
+#include "ompl/base/samplers/InformedStateSampler.h"
 #include "ompl/datastructures/NearestNeighbors.h"
 #include "BIVstar.h"
 
@@ -117,6 +121,8 @@ namespace ompl
             /** \brief Get the nearest unconnected samples using the appropriate "near" definition (i.e., k or r). */
             void nearestSamples(const VertexPtr &vertex, VertexPtrVector *neighbourSamples);
 
+            void updateRelation();
+
             /** \brief Adds the graph to the given PlannerData struct. */
             void getGraphAsPlannerData(ompl::base::PlannerData &data) const;
 
@@ -134,6 +140,19 @@ namespace ompl
 
             /** \brief Get a copy of all samples. */
             VertexPtrVector getCopyOfSamples() const;
+
+            bool climbDirEmpty() const { return climb_dir_.empty(); }
+
+            struct VertexCompartor {
+                base::ProblemDefinition* pd;
+                bool operator()(VertexConstPtr x, VertexConstPtr y);
+            };
+
+            auto popBestNodeInClimbDir() {
+                return climb_dir_.extract(climb_dir_.begin());
+            }
+
+            void makeRRVExtend(base::Cost bestCost);
 
             // ---
             // Modification.
@@ -194,12 +213,6 @@ namespace ompl
 
             /** \brief Get the rewiring scale factor. */
             double getRewireFactor() const;
-
-            /** \brief Enable a k-nearest search for instead of an r-disc search. */
-            void setUseKNearest(bool useKNearest);
-
-            /** \brief Get whether a k-nearest search is being used.*/
-            bool getUseKNearest() const;
 
             /** Enable sampling "just-in-time", i.e., only when necessary for a nearest-neighbour search. */
             void setJustInTimeSampling(bool useJit);
@@ -323,19 +336,10 @@ namespace ompl
             /** \brief Calculate the r for r-disc nearest neighbours, a function of the current graph. */
             double calculateR(unsigned int numUniformSamples) const;
 
-            /** \brief Calculate the k for k-nearest neighours, a function of the current graph. */
-            unsigned int calculateK(unsigned int numUniformSamples) const;
-
             /** \brief Calculate the lower-bounding radius RGG term for asymptotic almost-sure convergence to the
              * optimal path (i.e., r_rrg* in Karaman and Frazzoli IJRR 11). This is a function of the size of the
              * problem domain. */
             double calculateMinimumRggR() const;
-
-            /** \brief Calculate the lower-bounding k-nearest RGG term for asymptotic almost-sure convergence to the
-             * optimal path (i.e., k_rrg* in Karaman and Frazzoli IJRR 11). This is a function of the state dimension
-             * and is left as a double for later accuracy in calculate k. */
-            double calculateMinimumRggK() const;
-
             // ---
             // Debug helpers.
             // ---
@@ -373,6 +377,8 @@ namespace ompl
             /** \brief State sampler */
             ompl::base::InformedSamplerPtr sampler_{nullptr};
 
+            ompl::base::StateSamplerPtr local_sampler_{nullptr};
+
             /** \brief The start states of the problem as vertices. Constructed as a shared_ptr to give easy access to
              * helper classes. */
             VertexPtrVector startVertices_;
@@ -398,6 +404,8 @@ namespace ompl
 
             std::unordered_map<VertexPtr, Relation> climb_dict_;
 
+            std::map<VertexPtr, std::vector<VertexPtr>> climb_dir_;
+
             /** \brief The number of samples in this batch. */
             unsigned int numNewSamplesInCurrentBatch_{0u};
 
@@ -410,13 +418,6 @@ namespace ompl
             double r_{0.};
 
             double r_vine_{2.};
-
-            /** \brief The minimum k-nearest RGG connection term. Only a function of state dimension, so can be
-             * calculated once. Left as a double for later accuracy in calculate k. */
-            double k_rgg_{0.};
-
-            /** \brief The current k-nearest RGG connection number. */
-            unsigned int k_{0u};
 
             /** \brief The measure of the continuous problem domain which we are approximating with samples. This is
              * initially the problem domain but can shrink as we focus the search. */
@@ -469,8 +470,7 @@ namespace ompl
             /** \brief The rewiring factor, s, so that r_rgg = s \times r_rgg* > r_rgg*. */
             double rewireFactor_{1.1};
 
-            /** \brief Option to use k-nearest search for rewiring. */
-            bool useKNearest_{true};
+            double climb_distance_threshold_{1};
 
             /** \brief Whether to use just-in-time sampling. */
             bool useJustInTimeSampling_{false};
