@@ -114,7 +114,7 @@ namespace ompl
                    const std::shared_ptr<const unsigned int> &approximationId, bool root)
           : id_(getIdGenerator().getNewId())
           , si_(std::move(spaceInformation))
-          , costHelpPtr_(std::move(costHelpPtr))
+          , costHelpPtr_(costHelpPtr)
           , queuePtr_(queuePtr)
           , state_(si_->allocState())
           , isRoot_(root)

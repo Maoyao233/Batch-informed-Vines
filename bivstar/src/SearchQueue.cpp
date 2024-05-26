@@ -465,7 +465,7 @@ namespace ompl
                 VertexPtrVector neighbourSamples;
                 graphPtr_->nearestSamples(vertex, &neighbourSamples);
 
-                graphPtr_->updateRelation();
+                graphPtr_->updateRelation(vertex);
 
                 // Add all outgoing edges to neighbouring vertices and samples.
                 this->enqueueEdges(vertex, neighbourSamples);
@@ -597,8 +597,9 @@ namespace ompl
                             // Make sure edges to kiddos aren't added twice.
                             if (child->getParent()->getId() != parent->getId())
                             {
+
                                 // Make sure the neighbour vertex is not already my parent.
-                                if (parent->isRoot() || child->getId() != parent->getParent()->getId())
+                                if (!parent->getParent() || child->getId() != parent->getParent()->getId())
                                 {
                                     // The neighbour is not my parent, attempt to queue the edge.
                                     this->enqueueEdgeConditionally(parent, child);

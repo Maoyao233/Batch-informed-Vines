@@ -47,11 +47,13 @@
 #include <cmath>
 // For boost math constants
 #include <boost/math/constants/constants.hpp>
+#include <boost/math/distributions/chi_squared.hpp>
 
 // OMPL:
 // For OMPL_INFORM et al.
 #include "BIVstar.h"
 #include "Eigen/src/Core/Matrix.h"
+#include "PCA.hpp"
 #include "ompl/base/Cost.h"
 #include "ompl/base/ScopedState.h"
 #include "ompl/base/State.h"
@@ -88,6 +90,15 @@
 #define ASSERT_SETUP
 #endif  // BIVSTAR_DEBUG
 
+namespace
+{
+    double chi_ppf(double p, int df)
+    {
+        boost::math::chi_squared_distribution<double> chi_dist(df);
+        return boost::math::quantile(chi_dist, p);
+    }
+}  // namespace
+
 namespace ompl
 {
     namespace geometric
@@ -115,6 +126,8 @@ namespace ompl
             costHelpPtr_ = costHelper;
             queuePtr_ = searchQueue;
 
+            ndim_ = spaceInformation->getStateDimension();
+
             // Configure the nearest-neighbour constructs.
             // Only allocate if they are empty (as they can be set to a specific version by a call to
             // setNearestNeighbors)
@@ -122,12 +135,18 @@ namespace ompl
             {
                 samples_.reset(ompl::tools::SelfConfig::getDefaultNearestNeighbors<VertexPtr>(plannerPtr));
             }
+
+            if (!static_cast<bool>(obsSamples_))
+            {
+                obsSamples_.reset(ompl::tools::SelfConfig::getDefaultNearestNeighbors<VertexPtr>(plannerPtr));
+            }
             // No else, already allocated (by a call to setNearestNeighbors())
 
             // Configure:
             NearestNeighbors<VertexPtr>::DistanceFunction distanceFunction(
                 [this](const VertexConstPtr &a, const VertexConstPtr &b) { return distance(a, b); });
             samples_->setDistanceFunction(distanceFunction);
+            obsSamples_->setDistanceFunction(distanceFunction);
 
             // Set the min, max and sampled cost to the proper objective-based values:
             minCost_ = costHelpPtr_->infiniteCost();
@@ -183,12 +202,14 @@ namespace ompl
                 }
 
                 // Calculate an estimate of the problem measure by (hyper)cubing the max distance
-                approximationMeasure_ = std::pow(distScale * maxDist, spaceInformation_->getStateDimension());
+                approximationMeasure_ = std::pow(distScale * maxDist, ndim_);
             }
             // No else, finite problem dimension
 
             // Make the initial r infinity
             r_ = std::numeric_limits<double>::infinity();
+
+            chi_ppf_ = chi_ppf(1 - 2 * (1 - std::pow(0.5, 0.5)), ndim_);
         }
 
         void BIVstar::ImplicitGraph::reset()
@@ -283,36 +304,14 @@ namespace ompl
             return this->distance(vertices.first, vertices.second);
         }
 
-        void BIVstar::ImplicitGraph::updateRelation()
+        void BIVstar::ImplicitGraph::updateRelation(const VertexPtr &vertex)
         {
-            VertexPtrVector data;
-            samples_->list(data);
+            std::vector<std::shared_ptr<Vertex>> climb_set;
+            obsSamples_->nearestR(vertex, r_ / 4, climb_set);
 
-            for (const auto &vertex : data)
+            if (!climb_set.empty())
             {
-                std::vector<std::shared_ptr<Vertex>> climb_set;
-                for (auto &[obs_vertex, relation] : climb_dict_)
-                {
-                    if (relation.climbed)
-                    {
-                        continue;
-                    }
-                    auto dist = distance(vertex, obs_vertex);
-                    if (dist > climb_distance_threshold_)
-                    {
-                        continue;
-                    }
-                    if (relation.distance > dist)
-                    {
-                        relation.distance = dist;
-                        relation.belong = vertex;
-                        climb_set.push_back(obs_vertex);
-                    }
-                }
-                if (!climb_set.empty())
-                {
-                    climb_dir_[vertex] = std::move(climb_set);
-                }
+                climbDir_.emplace_back(vertex, std::move(climb_set));
             }
         }
 
@@ -649,8 +648,6 @@ namespace ompl
             // And there are no longer and recycled samples.
             recycledSamples_.clear();
 
-            std::erase_if(climb_dict_, [](auto p) { return p.second.climbed; });
-
             // Increment the approximation id.
             ++(*approximationId_);
 
@@ -707,6 +704,26 @@ namespace ompl
             samples_->add(samples);
         }
 
+        void BIVstar::ImplicitGraph::addToObsSamples(const VertexPtr &sample)
+        {
+            ASSERT_SETUP
+
+            // NO COUNTER. generated samples are counted at the sampler.
+
+            // Add to the NN structure:
+            obsSamples_->add(sample);
+        }
+
+        void BIVstar::ImplicitGraph::addToObsSamples(const VertexPtrVector &samples)
+        {
+            ASSERT_SETUP
+
+            // NO COUNTER. generated samples are counted at the sampler.
+
+            // Add to the NN structure:
+            obsSamples_->add(samples);
+        }
+
         void BIVstar::ImplicitGraph::removeFromSamples(const VertexPtr &sample)
         {
             ASSERT_SETUP
@@ -754,6 +771,144 @@ namespace ompl
 
             // Mark the sample as pruned
             sampleCopy->markPruned();
+        }
+
+        BIVstar::VertexPtrVector BIVstar::ImplicitGraph::VineLikeExpansion(const BIVstar::VertexPtrVector &obs_states,
+                                                                           const BIVstar::VertexPtrVector &free_states,
+                                                                           const BIVstar::VertexPtr &q_near,
+                                                                           const BIVstar::VertexPtrVector &q_rands)
+        {
+            auto to_matrix_xd = [ndim = this->ndim_](const BIVstar::VertexPtrVector &vertices)
+            {
+                Eigen::MatrixXd res{vertices.size(), ndim};
+                for (size_t i = 0; i < vertices.size(); i++)
+                {
+                    auto *state = vertices[i]->state();
+                    for (size_t j = 0; j < ndim; j++)
+                    {
+                        res(i, j) =
+                            static_cast<const ompl::base::RealVectorStateSpace::StateType *>(state)->operator[](j);
+                    }
+                }
+                return res;
+            };
+
+            auto vertex_from_vector_xd = [this](const Eigen::VectorXd &vector)
+            {
+                BIVstar::VertexPtr res =
+                    std::make_shared<Vertex>(spaceInformation_, costHelpPtr_, queuePtr_, approximationId_);
+                for (size_t i = 0; i < ndim_; i++)
+                {
+                    static_cast<ompl::base::RealVectorStateSpace::StateType *>(res->state())->operator[](i) = vector(i);
+                }
+                return res;
+            };
+
+            Eigen::MatrixXd free_states_matrix = to_matrix_xd(free_states),
+                            obs_states_matrix = to_matrix_xd(obs_states), q_rands_matrix = to_matrix_xd(q_rands);
+
+            auto [obs_eigenvalues, obsaxes, obscenter] = PCAEllipsoid(obs_states_matrix);
+
+            auto obslen = obs_eigenvalues.array().sqrt();
+
+            auto is_point_in_ellipsoid = [](const Eigen::VectorXd &point, const Eigen::VectorXd &center,
+                                            const Eigen::MatrixXd &axes, const Eigen::VectorXd &radii)
+            {
+                assert(axes.rows() == radii.rows());
+
+                double distance_squared = 0;
+                for (Eigen::Index i = 0; i < axes.cols(); i++)
+                {
+                    double r = radii(i);
+                    if (r == 0)
+                    {
+                        return false;
+                    }
+                    auto projection = (point - center).dot(axes.col(i));
+                    distance_squared += (projection / r) * (projection / r);
+                }
+                return distance_squared <= 1;
+            };
+
+            std::vector<Eigen::VectorXd> tendril_set;
+
+            for (auto &&free_sample : free_states_matrix.rowwise())
+            {
+                if (is_point_in_ellipsoid(free_sample, obscenter, obsaxes, obslen))
+                {
+                    tendril_set.emplace_back(free_sample);
+                }
+            }
+
+            auto project = [=](const Eigen::MatrixXd &eigenvectors, const Eigen::VectorXd &sample,
+                               const Eigen::VectorXd &center, int k)
+            {
+                Eigen::VectorXd dir = sample - center;
+                Eigen::VectorXd projection = Eigen::VectorXd::Zero(center.size());
+                // OMPL_INFORM("vectors.cols()=%llu, dir.rows()=%llu, k=%d", eigenvectors.colStride(), dir.rows(), k);
+                for (int i = 0; i < k; i++)
+                {
+                    const Eigen::VectorXd &v = eigenvectors.col(i);
+                    projection += v.dot(dir) * v;
+                }
+
+                return vertex_from_vector_xd(projection + center);
+            };
+
+            // OMPL_INFORM("%llu", tendril_set.size());
+            Eigen::VectorXd q_near_vector(ndim_);
+            for (size_t i = 0; i < ndim_; i++)
+            {
+                q_near_vector(i) =
+                    static_cast<const ompl::base::RealVectorStateSpace::StateType *>(q_near->state())->operator[](i);
+            }
+
+            VertexPtrVector q_projections;
+            for (auto &&q_rand : q_rands_matrix.rowwise())
+            {
+                q_projections.push_back(project(obsaxes, q_rand, q_near_vector, ndim_ - 1));
+            }
+
+            if (tendril_set.size() < 2)
+            {
+                return q_projections;
+            }
+
+            OMPL_INFORM("I'm here!");
+
+            auto contains = [this](const Eigen::VectorXd &eigenvalues, const Eigen::MatrixXd &eigenvectors,
+                                   const Eigen::VectorXd &sample)
+            {
+                Eigen::VectorXd transformed_sample = eigenvectors.transpose() * sample;
+                auto d = std::sqrt((transformed_sample.transpose() * eigenvalues * transformed_sample)(0, 0));
+                return d < chi_ppf_;
+            };
+
+            if (contains(obs_eigenvalues, obsaxes, q_near_vector))
+            {
+                auto [free_eigenvalues, free_eigenvectors, freecenter] = PCAEllipsoid(free_states_matrix);
+                VertexPtrVector extend_q;
+                for (auto &&q_rand : q_rands_matrix.rowwise())
+                {
+                    extend_q.emplace_back(project(free_eigenvectors, q_rand, freecenter, ndim_ - 1));
+                }
+                return extend_q;
+            }
+
+            Eigen::VectorXd q_2 = Eigen::VectorXd::Zero(ndim_);
+
+            for (auto &&tendril_p : tendril_set)
+            {
+                q_2 += tendril_p;
+            }
+
+            q_2 /= tendril_set.size();
+
+            VertexPtrVector res;
+            res.reserve(q_projections.size() + 1);
+            res.push_back(vertex_from_vector_xd(q_2));
+            res.insert(res.end(), q_projections.begin(), q_projections.end());
+            return res;
         }
 
         void BIVstar::ImplicitGraph::recycleSample(const VertexPtr &sample)
@@ -977,6 +1132,7 @@ namespace ompl
 
                 // Actually generate the new samples
                 VertexPtrVector newStates{};
+                VertexPtrVector newObsStates;
                 newStates.reserve(numRequiredSamples);
                 for (std::size_t tries = 0u;
                      tries < averageNumOfAllowedFailedAttemptsWhenSampling_ * numRequiredSamples &&
@@ -1005,13 +1161,14 @@ namespace ompl
                         }
                         else
                         {
-                            climb_dict_.try_emplace(std::move(newState));
+                            newObsStates.push_back(std::move(newState));
                         }
                     }
                 }
 
                 // Add the new state as a sample.
                 this->addToSamples(newStates);
+                this->addToObsSamples(newObsStates);
 
                 // Record the sampled cost space
                 sampledCost_ = requiredCost;
@@ -1372,7 +1529,7 @@ namespace ompl
             }
 
             // Now update the appropriate term
-            this->calculateR(numUniformStates);
+            r_ = this->calculateR(numUniformStates);
         }
 
         std::size_t BIVstar::ImplicitGraph::computeNumberOfSamplesInInformedSet() const
@@ -1524,97 +1681,86 @@ namespace ompl
             return samples;
         }
 
+
         void BIVstar::ImplicitGraph::makeRRVExtend(base::Cost bestCost)
         {
-            auto best_node_handle = popBestNodeInClimbDir();
-            const auto &vine_node = best_node_handle.key();
-            const auto &vine_rand_nodes = best_node_handle.mapped();
-
-            if (costHelpPtr_->isCostWorseThan(
-                    costHelpPtr_->combineCosts(vine_node->getCost(), costHelpPtr_->costToComeHeuristic(vine_node)),
-                    bestCost))
+            std::vector<std::pair<base::Cost, size_t>> indices(climbDir_.size());
+            for (size_t i = 0; i < climbDir_.size(); i++)
             {
-                return;
+                auto &vertex = climbDir_[i].first;
+                indices[i] = {costHelpPtr_->combineCosts(vertex->getCost(), costHelpPtr_->costToGoHeuristic(vertex)),
+                              i};
             }
 
-            std::vector<std::shared_ptr<Vertex>> ready_to_climb;
+            std::sort(indices.begin(), indices.end(), [this](const auto &lhs, const auto &rhs)
+                      { return costHelpPtr_->isCostBetterThan(lhs.first, rhs.first); });
 
-            for (auto &&vine_rand : vine_rand_nodes)
+            for (auto [cost, index]: indices)
             {
-                if (auto &rel = climb_dict_[vine_node]; !rel.climbed && rel.belong == vine_node)
+                auto [vine_node, vine_rand_nodes] = std::move(climbDir_[index]);
+
+                // OMPL_DEBUG("make RRV extend, vine_node.cost = %f, to_come_heurist = %f, to_go_heurist = %f, bestCost
+                // = %f", vine_node->getCost(), costHelpPtr_->costToComeHeuristic(vine_node),
+                // costHelpPtr_->costToGoHeuristic(vine_node), bestCost);
+                if (costHelpPtr_->isCostWorseThan(
+                        cost,
+                        bestCost))
                 {
-                    rel.climbed = true;
-                    ready_to_climb.push_back(vine_rand);
+                    return;
                 }
-            }
 
-            if (!ready_to_climb.empty())
-            {
-                return;
-            }
+                std::vector<std::shared_ptr<Vertex>> readyToClimb;
 
-            constexpr int sample_num = 500;
-
-            std::vector<base::ScopedStatePtr> free_states, obs_states;
-
-            for (int i = 0; i < sample_num; i++)
-            {
-                base::ScopedStatePtr sample_scoped_state = std::make_shared<base::ScopedState<>>(spaceInformation_);
-                local_sampler_->sampleUniformNear(sample_scoped_state->get(), vine_node->state(),
-                                                  climb_distance_threshold_);
-
-                if (spaceInformation_->isValid(sample_scoped_state->get()))
+                for (auto &vine_rand : vine_rand_nodes)
                 {
-                    free_states.push_back(std::move(sample_scoped_state));
+                    readyToClimb.push_back(std::move(vine_rand));
                 }
-                else
+
+                // OMPL_DEBUG("ready_to_climb.size() = %llu", ready_to_climb.size());
+
+                if (readyToClimb.empty())
                 {
-                    obs_states.push_back(std::move(sample_scoped_state));
+                    return;
+                }
+
+                constexpr int sample_num = 256;
+
+                VertexPtrVector free_states, obs_states;
+
+                for (int i = 0; i < sample_num; i++)
+                {
+                    VertexPtr sample_vertex =
+                        std::make_shared<Vertex>(spaceInformation_, costHelpPtr_, queuePtr_, approximationId_);
+                    local_sampler_->sampleUniformNear(sample_vertex->state(), vine_node->state(),
+                                                      r_);
+
+                    if (spaceInformation_->isValid(sample_vertex->state()))
+                    {
+                        free_states.push_back(std::move(sample_vertex));
+                    }
+                    else
+                    {
+                        obs_states.push_back(std::move(sample_vertex));
+                    }
+                }
+                // OMPL_INFORM("obs_states.size = %llu", obs_states.size());
+                // in case obs could not be PCA
+                if (obs_states.size() < ndim_)
+                {
+                    continue;
+                }
+
+                auto list_of_point = VineLikeExpansion(obs_states, free_states, vine_node, readyToClimb);
+
+                for (auto &&vine_expand_node : list_of_point)
+                {
+                    if (spaceInformation_->isValid(vine_expand_node->state()))
+                    {
+                        numRRVExtended_++;
+                        queuePtr_->insertOutgoingEdges(vine_expand_node);
+                    }
                 }
             }
-            // in case obs could not be PCA
-            if (obs_states.size() <= 1)
-            {
-                return;
-            }
-
-            const size_t ndim = spaceInformation_->getStateSpace()->getDimension();
-
-            Eigen::MatrixXd free_states_matrix{free_states.size(), ndim},
-                obs_states_matrix{obs_states.size(), ndim};
-
-            for (size_t i = 0; i < free_states.size(); i++) {
-                auto* state = free_states[i]->get();
-                for (size_t j = 0; j < ndim; j++) {
-                    free_states_matrix(i, j) = static_cast<const ompl::base::RealVectorStateSpace::StateType*>(state)->operator[](j);
-                }
-            }
-
-            for (size_t i = 0; i < obs_states.size(); i++) {
-                auto* state = obs_states[i]->get();
-                for (size_t j = 0; j < ndim; j++) {
-                    obs_states_matrix(i, j) = static_cast<const ompl::base::RealVectorStateSpace::StateType*>(state)->operator[](j);
-                }
-            }
-
-            Eigen::MatrixXd q_rands_matrix{ready_to_climb.size(), ndim};
-            for (size_t i = 0; i < ready_to_climb.size(); i++)
-            {
-                auto* state = ready_to_climb[i]->state();
-                for (size_t j = 0; j < ndim; j++) {
-                    obs_states_matrix(i, j) = static_cast<const ompl::base::RealVectorStateSpace::StateType*>(state)->operator[](j);
-                }
-            }
-
-            obs_states_matrix.rowwise() -= obs_states_matrix.colwise().mean();
-            Eigen::MatrixXd cov = (obs_states_matrix.adjoint() * obs_states_matrix) / (obs_states_matrix.rows() - 1);
-
-            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver{cov};
-            if (solver.info() != Eigen::Success) {
-                OMPL_ERROR("Failed to finish PCA!");
-                return;
-            }
-            // To be finished
         }
 
         void BIVstar::ImplicitGraph::setRewireFactor(double rewireFactor)

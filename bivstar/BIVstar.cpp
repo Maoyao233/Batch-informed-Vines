@@ -90,26 +90,17 @@ namespace ompl
                                           "1.0:0.01:3.0");
             Planner::declareParam<unsigned int>("samples_per_batch", this, &BIVstar::setSamplesPerBatch,
                                                 &BIVstar::getSamplesPerBatch, "1:1:1000000");
-            Planner::declareParam<bool>("use_k_nearest", this, &BIVstar::setUseKNearest, &BIVstar::getUseKNearest,
-                                        "0,"
-                                        "1");
             Planner::declareParam<bool>("use_graph_pruning", this, &BIVstar::setPruning, &BIVstar::getPruning,
-                                        "0,"
-                                        "1");
+                                        "0,1");
             Planner::declareParam<double>("prune_threshold_as_fractional_cost_change", this,
                                           &BIVstar::setPruneThresholdFraction, &BIVstar::getPruneThresholdFraction,
                                           "0.0:0.01:1.0");
-            Planner::declareParam<bool>("delay_rewiring_to_first_solution", this,
-                                        &BIVstar::setDelayRewiringUntilInitialSolution,
-                                        &BIVstar::getDelayRewiringUntilInitialSolution, "0,1");
             Planner::declareParam<bool>("use_just_in_time_sampling", this, &BIVstar::setJustInTimeSampling,
                                         &BIVstar::getJustInTimeSampling, "0,1");
             Planner::declareParam<bool>("drop_unconnected_samples_on_prune", this, &BIVstar::setDropSamplesOnPrune,
                                         &BIVstar::getDropSamplesOnPrune, "0,1");
             Planner::declareParam<bool>("stop_on_each_solution_improvement", this, &BIVstar::setStopOnSolnImprovement,
                                         &BIVstar::getStopOnSolnImprovement, "0,1");
-            Planner::declareParam<bool>("use_strict_queue_ordering", this, &BIVstar::setStrictQueueOrdering,
-                                        &BIVstar::getStrictQueueOrdering, "0,1");
             Planner::declareParam<bool>("find_approximate_solutions", this, &BIVstar::setConsiderApproximateSolutions,
                                         &BIVstar::getConsiderApproximateSolutions, "0,1");
 
@@ -454,7 +445,8 @@ namespace ompl
             // Keep track of how many iterations we've performed.
             ++numIterations_;
 
-            // If there's no need to RRV expand, and the search is done or the queue is empty, we need to populate the queue.
+            // If there's no need to RRV expand, and the search is done or the queue is empty, we need to populate the
+            // queue.
             if (graphPtr_->climbDirEmpty() && (isSearchDone_ || queuePtr_->isEmpty()))
             {
                 // Check whether we've exhausted the current approximation.
@@ -500,9 +492,12 @@ namespace ompl
 
                 isSearchDone_ = false;
             }
-            else if (isSearchDone_ || queuePtr_->isEmpty()) 
+            else if (isSearchDone_ || queuePtr_->isEmpty())
             {
+                // OMPL_INFORM("RRV Extend");
                 graphPtr_->makeRRVExtend(bestCost_);
+                graphPtr_->clearClimbDir();
+                graphPtr_->clearObsSamples();
             }
             else
             {
@@ -628,9 +623,8 @@ namespace ompl
                 // Count the number of samples that could be pruned.
                 auto samples = graphPtr_->getCopyOfSamples();
                 auto numSamplesThatCouldBePruned =
-                    std::count_if(samples.begin(), samples.end(), [this](const auto& sample){
-                        return graphPtr_->canSampleBePruned(sample);
-                    });
+                    std::count_if(samples.begin(), samples.end(),
+                                  [this](const auto &sample) { return graphPtr_->canSampleBePruned(sample); });
 
                 // Only prune if the decrease in number of samples and the associated decrease in nearest neighbour
                 // lookup cost justifies the cost of pruning. There has to be a way to make this more formal, and less
@@ -951,22 +945,26 @@ namespace ompl
 
         void BIVstar::goalMessage() const
         {
-            OMPL_INFORM("%s (%u iters): Found a solution of cost %.4f (%u vertices) from %u samples by processing %u "
-                        "edges (%u collision checked) to create %u vertices and perform %u rewirings. The graph "
+            OMPL_INFORM("%s (%u iters): Found a solution of cost %.4f (%u vertices) from %u states sampled, %u valid "
+                        "samples by processing %u "
+                        "edges (%u collision checked) to create %u vertices and perform %u rewirings. RRV extended %u "
+                        "vertices. The graph "
                         "currently has %u vertices.",
                         Planner::getName().c_str(), numIterations_, bestCost_.value(), bestLength_,
-                        graphPtr_->numStatesGenerated(), queuePtr_->numEdgesPopped(), numEdgeCollisionChecks_,
-                        graphPtr_->numVerticesConnected(), numRewirings_, graphPtr_->numVertices());
+                        graphPtr_->numStateCollisionChecks(), graphPtr_->numStatesGenerated(),
+                        queuePtr_->numEdgesPopped(), numEdgeCollisionChecks_, graphPtr_->numVerticesConnected(),
+                        numRewirings_, graphPtr_->numRRVExtended(), graphPtr_->numVertices());
         }
 
         void BIVstar::endSuccessMessage() const
         {
             OMPL_INFORM("%s: Finished with a solution of cost %.4f (%u vertices) found from %u samples by processing "
-                        "%u edges (%u collision checked) to create %u vertices and perform %u rewirings. The final "
+                        "%u edges (%u collision checked) to create %u vertices and perform %u rewirings. RRV extended "
+                        "%u vertices. The final "
                         "graph has %u vertices.",
                         Planner::getName().c_str(), bestCost_.value(), bestLength_, graphPtr_->numStatesGenerated(),
                         queuePtr_->numEdgesPopped(), numEdgeCollisionChecks_, graphPtr_->numVerticesConnected(),
-                        numRewirings_, graphPtr_->numVertices());
+                        numRewirings_, graphPtr_->numRRVExtended(), graphPtr_->numVertices());
         }
 
         void BIVstar::endFailureMessage() const

@@ -51,7 +51,7 @@
 #include <boost/format.hpp>
 
 unsigned ndim = 6;
-const double edgeWidth = 0.1;
+const double edgeWidth = 0.2;
 
 // Only states near some edges of a hypercube are valid. The valid edges form a
 // narrow passage from (0,...,0) to (1,...,1). A state s is valid if there exists
@@ -73,12 +73,18 @@ bool isStateValid(const ompl::base::State *state)
     return true;
 }
 
+void addPlanner(ompl::tools::Benchmark &benchmark, const ompl::base::PlannerPtr &planner, double range)
+{
+    ompl::base::ParamSet &params = planner->params();
+    if (params.hasParam(std::string("range")))
+        params.setParam(std::string("range"), ompl::toString(range));
+    benchmark.addPlanner(planner);
+}
 
 int main(int argc, char **argv)
 {
-    double time = 10;
     if (argc > 1)
-        time = std::atof(argv[1]);
+        ndim = std::stoul(argv[1]);
 
     double range = edgeWidth * 0.5;
     auto space(std::make_shared<ompl::base::RealVectorStateSpace>(ndim));
@@ -97,39 +103,31 @@ int main(int argc, char **argv)
         goal[i] = 1.;
     }
     ss.setStartAndGoalStates(start, goal);
-    if (true)
+
+    constexpr double runtime_limits[] = {1, 5, 10};
+
+    // by default, use the Benchmark class
+    double memory_limit = 4096;
+    int run_count = 20;
+
+    ompl::tools::Benchmark b(ss, "HyperCube");
+    b.addExperimentParameter("num_dims", "INTEGER", std::to_string(ndim));
+
+    OMPL_INFORM("Start benchmark!");
+    // addPlanner(b, std::make_shared<ompl::geometric::STRIDE>(ss.getSpaceInformation()), range);
+    // addPlanner(b, std::make_shared<ompl::geometric::EST>(ss.getSpaceInformation()), range);
+    // addPlanner(b, std::make_shared<ompl::geometric::KPIECE1>(ss.getSpaceInformation()), range);
+    addPlanner(b, std::make_shared<ompl::geometric::RRTstar>(ss.getSpaceInformation()), range);
+    addPlanner(b, std::make_shared<ompl::geometric::BITstar>(ss.getSpaceInformation()), range);
+    addPlanner(b, std::make_shared<ompl::geometric::AITstar>(ss.getSpaceInformation()), range);
+    addPlanner(b, std::make_shared<ompl::geometric::BIVstar>(ss.getSpaceInformation()), range);
+
+    for (auto runtime_limit : runtime_limits)
     {
-        auto planner = std::make_shared<ompl::geometric::BIVstar>(ss.getSpaceInformation());
-        planner->setProblemDefinition(ss.getProblemDefinition());
-        planner->printProperties(std::cout);
-        planner->printSettings(std::cout);
-        ss.setPlanner(planner);
+        ompl::tools::Benchmark::Request request(runtime_limit, memory_limit, run_count);
 
-        if (ss.solve(time))
-        {
-            std::cout << "Found solution:" << std::endl;
-            // print the path to screen
-            ss.simplifySolution();
-            ss.getSolutionPath().print(std::cout);
-        }
-    }
-    if (false)
-    {
-        auto planner = std::make_shared<ompl::geometric::BITstar>(ss.getSpaceInformation());
-        planner->params().setParam("use_k_nearest", "0"); // 加上这个才是公平的比较
-        planner->setProblemDefinition(ss.getProblemDefinition());
-
-        planner->printProperties(std::cout);
-        planner->printSettings(std::cout);
-        ss.setPlanner(planner);
-
-        if (ss.solve(time))
-        {
-            std::cout << "Found solution:" << std::endl;
-            // print the path to screen
-            ss.simplifySolution();
-            ss.getSolutionPath().print(std::cout);
-        }
+        b.benchmark(request);
+        b.saveResultsToFile(boost::str(boost::format("hypercube_%i_%.0f.log") % ndim % runtime_limit).c_str());
     }
 
     return 0;

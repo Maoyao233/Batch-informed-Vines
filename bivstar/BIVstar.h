@@ -157,7 +157,7 @@ public:
   /** \brief Construct with a pointer to the space information and an optional
    * name. */
   BIVstar(const base::SpaceInformationPtr &spaceInfo,
-          const std::string &name = "kBIVstar");
+          const std::string &name = "BIVstar");
 
   /** \brief Destruct using the default destructor. */
   virtual ~BIVstar() override = default;
@@ -603,15 +603,6 @@ private:
   /** \brief Whether to stop the planner as soon as the path changes. */
   bool stopOnSolutionChange_{false};
 
-  // BIV*
-
-  bool check_vine_{false};
-
-  struct Relation {
-    std::shared_ptr<Vertex> belong{nullptr};
-    double distance{std::numeric_limits<double>::infinity()};
-    bool climbed{false};
-  };
 }; // class BIVstar
 } // namespace ompl::geometric
 

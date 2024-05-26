@@ -121,7 +121,7 @@ namespace ompl
             /** \brief Get the nearest unconnected samples using the appropriate "near" definition (i.e., k or r). */
             void nearestSamples(const VertexPtr &vertex, VertexPtrVector *neighbourSamples);
 
-            void updateRelation();
+            void updateRelation(const VertexPtr& vetex);
 
             /** \brief Adds the graph to the given PlannerData struct. */
             void getGraphAsPlannerData(ompl::base::PlannerData &data) const;
@@ -141,18 +141,24 @@ namespace ompl
             /** \brief Get a copy of all samples. */
             VertexPtrVector getCopyOfSamples() const;
 
-            bool climbDirEmpty() const { return climb_dir_.empty(); }
+            VertexPtrVector VineLikeExpansion(const VertexPtrVector& obs_states, const VertexPtrVector& free_points, const VertexPtr& q_near,
+                                              const VertexPtrVector& q_rands);
 
-            struct VertexCompartor {
-                base::ProblemDefinition* pd;
+            bool climbDirEmpty() const
+            {
+                return climbDir_.empty();
+            }
+
+            struct VertexCompartor
+            {
+                base::ProblemDefinition *pd;
                 bool operator()(VertexConstPtr x, VertexConstPtr y);
             };
 
-            auto popBestNodeInClimbDir() {
-                return climb_dir_.extract(climb_dir_.begin());
-            }
-
             void makeRRVExtend(base::Cost bestCost);
+
+            void clearClimbDir() { climbDir_.clear(); }
+            void clearObsSamples() { obsSamples_->clear(); }
 
             // ---
             // Modification.
@@ -180,6 +186,12 @@ namespace ompl
 
             /** \brief Add a vector of unconnected samples. */
             void addToSamples(const VertexPtrVector &samples);
+
+            /** \brief Add an unconnected sample. */
+            void addToObsSamples(const VertexPtr &sample);
+
+            /** \brief Add a vector of unconnected samples. */
+            void addToObsSamples(const VertexPtrVector &samples);
 
             /** \brief Remove a sample from the sample set. */
             void removeFromSamples(const VertexPtr &sample);
@@ -245,6 +257,8 @@ namespace ompl
             template <template <typename T> class NN>
             void setNearestNeighbors();
 
+            //void setRRVLocalSampleRadius_(double radius);
+
             // ---
             // Progress counters.
             // ---
@@ -273,6 +287,10 @@ namespace ompl
             /** \brief The number of state collision checks. */
             unsigned int numStateCollisionChecks() const;
 
+            unsigned int numRRVExtended() const {
+                return numRRVExtended_;
+            }
+
             // ---
             // General helper functions.
             // ---
@@ -294,8 +312,8 @@ namespace ompl
              * sampled. */
             void updateSamples(const VertexConstPtr &vertex);
 
-            /** \brief 
-            */
+            /** \brief
+             */
             void updateClimbDict();
 
             /** \brief Iterates through all the vertices in the tree and finds the one that is closes to the goal. This
@@ -399,12 +417,12 @@ namespace ompl
             /** \brief The samples as a nearest-neighbours datastructure. Sorted by nnDistance. */
             VertexPtrNNPtr samples_{nullptr};
 
+            VertexPtrNNPtr obsSamples_{nullptr};
+
             /** \brief A copy of the vertices recycled into samples during the most recently added batch. */
             VertexPtrVector recycledSamples_;
 
-            std::unordered_map<VertexPtr, Relation> climb_dict_;
-
-            std::map<VertexPtr, std::vector<VertexPtr>> climb_dir_;
+            std::vector<std::pair<VertexPtr, std::vector<VertexPtr>>> climbDir_;
 
             /** \brief The number of samples in this batch. */
             unsigned int numNewSamplesInCurrentBatch_{0u};
@@ -416,8 +434,6 @@ namespace ompl
 
             /** \brief The current r-disc RGG connection radius. */
             double r_{0.};
-
-            double r_vine_{2.};
 
             /** \brief The measure of the continuous problem domain which we are approximating with samples. This is
              * initially the problem domain but can shrink as we focus the search. */
@@ -460,6 +476,8 @@ namespace ompl
             /** \brief The number of state collision checks. Accessible via numStateCollisionChecks. */
             unsigned int numStateCollisionChecks_{0u};
 
+            unsigned int numRRVExtended_{0u};
+
             /** \brief The current approximation id. */
             const std::shared_ptr<unsigned int> approximationId_;
 
@@ -470,7 +488,7 @@ namespace ompl
             /** \brief The rewiring factor, s, so that r_rgg = s \times r_rgg* > r_rgg*. */
             double rewireFactor_{1.1};
 
-            double climb_distance_threshold_{1};
+            double climb_distance_threshold_{0.5};
 
             /** \brief Whether to use just-in-time sampling. */
             bool useJustInTimeSampling_{false};
@@ -484,11 +502,15 @@ namespace ompl
             /** \brief Whether to consider approximate solutions. */
             bool findApprox_{false};
 
+            double chi_ppf_{0};
+
+            size_t ndim_{0};
+
             /** \brief The average number of allowed failed attempts before giving up on a sample when sampling a new
              * batch. */
             std::size_t averageNumOfAllowedFailedAttemptsWhenSampling_{2u};
         };  // class ImplicitGraph
-    }       // namespace geometric
+    }  // namespace geometric
 }  // namespace ompl
 
 #endif  // OMPL_GEOMETRIC_PLANNERS_INFORMEDTREES_BIVSTAR_IMPLICITGRAPH_
