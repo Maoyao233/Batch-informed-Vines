@@ -141,8 +141,10 @@ namespace ompl
             /** \brief Get a copy of all samples. */
             VertexPtrVector getCopyOfSamples() const;
 
-            VertexPtrVector VineLikeExpansion(const VertexPtrVector& obs_states, const VertexPtrVector& free_points, const VertexPtr& q_near,
-                                              const VertexPtrVector& q_rands);
+            BIVstar::VertexPtrVector VineLikeExpansion(const std::vector<base::ScopedStatePtr> &obs_states,
+                                                                           const std::vector<base::ScopedStatePtr> &free_states,
+                                                                           const VertexPtr &q_near,
+                                                                           const VertexPtrVector &q_rands);
 
             bool climbDirEmpty() const
             {

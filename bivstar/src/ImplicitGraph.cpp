@@ -773,12 +773,27 @@ namespace ompl
             sampleCopy->markPruned();
         }
 
-        BIVstar::VertexPtrVector BIVstar::ImplicitGraph::VineLikeExpansion(const BIVstar::VertexPtrVector &obs_states,
-                                                                           const BIVstar::VertexPtrVector &free_states,
-                                                                           const BIVstar::VertexPtr &q_near,
-                                                                           const BIVstar::VertexPtrVector &q_rands)
+        BIVstar::VertexPtrVector BIVstar::ImplicitGraph::VineLikeExpansion(const std::vector<base::ScopedStatePtr> &obs_states,
+                                                                           const std::vector<base::ScopedStatePtr> &free_states,
+                                                                           const VertexPtr &q_near,
+                                                                           const VertexPtrVector &q_rands)
         {
-            auto to_matrix_xd = [ndim = this->ndim_](const BIVstar::VertexPtrVector &vertices)
+            auto to_matrix_xd = [ndim = this->ndim_](const std::vector<base::ScopedStatePtr> &vertices)
+            {
+                Eigen::MatrixXd res{vertices.size(), ndim};
+                for (size_t i = 0; i < vertices.size(); i++)
+                {
+                    auto *state = vertices[i]->get();
+                    for (size_t j = 0; j < ndim; j++)
+                    {
+                        res(i, j) =
+                            static_cast<const ompl::base::RealVectorStateSpace::StateType *>(state)->operator[](j);
+                    }
+                }
+                return res;
+            };
+
+            auto to_matrix_xd_2 = [ndim = this->ndim_](const VertexPtrVector &vertices)
             {
                 Eigen::MatrixXd res{vertices.size(), ndim};
                 for (size_t i = 0; i < vertices.size(); i++)
@@ -805,7 +820,7 @@ namespace ompl
             };
 
             Eigen::MatrixXd free_states_matrix = to_matrix_xd(free_states),
-                            obs_states_matrix = to_matrix_xd(obs_states), q_rands_matrix = to_matrix_xd(q_rands);
+                            obs_states_matrix = to_matrix_xd(obs_states), q_rands_matrix = to_matrix_xd_2(q_rands);
 
             auto [obs_eigenvalues, obsaxes, obscenter] = PCAEllipsoid(obs_states_matrix);
 
@@ -874,17 +889,15 @@ namespace ompl
                 return q_projections;
             }
 
-            OMPL_INFORM("I'm here!");
-
-            auto contains = [this](const Eigen::VectorXd &eigenvalues, const Eigen::MatrixXd &eigenvectors,
+            auto contains = [this](const Eigen::VectorXd &eigenvalues, const Eigen::MatrixXd &eigenvectors, const Eigen::VectorXd& center,
                                    const Eigen::VectorXd &sample)
             {
-                Eigen::VectorXd transformed_sample = eigenvectors.transpose() * sample;
+                Eigen::VectorXd transformed_sample = eigenvectors.transpose() * (sample - center);
                 auto d = std::sqrt((transformed_sample.transpose() * eigenvalues * transformed_sample)(0, 0));
                 return d < chi_ppf_;
             };
 
-            if (contains(obs_eigenvalues, obsaxes, q_near_vector))
+            if (contains(obs_eigenvalues, obsaxes, obscenter, q_near_vector))
             {
                 auto [free_eigenvalues, free_eigenvectors, freecenter] = PCAEllipsoid(free_states_matrix);
                 VertexPtrVector extend_q;
@@ -1723,18 +1736,18 @@ namespace ompl
                     return;
                 }
 
-                constexpr int sample_num = 256;
+                constexpr int sample_num = 1024;
 
-                VertexPtrVector free_states, obs_states;
+                std::vector<base::ScopedStatePtr> free_states, obs_states;
 
                 for (int i = 0; i < sample_num; i++)
                 {
-                    VertexPtr sample_vertex =
-                        std::make_shared<Vertex>(spaceInformation_, costHelpPtr_, queuePtr_, approximationId_);
-                    local_sampler_->sampleUniformNear(sample_vertex->state(), vine_node->state(),
+                    auto sample_vertex =
+                        std::make_shared<base::ScopedState<>>(spaceInformation_);
+                    local_sampler_->sampleUniformNear(sample_vertex->get(), vine_node->state(),
                                                       r_);
 
-                    if (spaceInformation_->isValid(sample_vertex->state()))
+                    if (spaceInformation_->isValid(sample_vertex->get()))
                     {
                         free_states.push_back(std::move(sample_vertex));
                     }

@@ -6,12 +6,12 @@
 
 void print_matrix(const Eigen::MatrixXd &matrix)
 {
-    size_t rows = matrix.rows();
-    for (auto &&col : matrix.colwise())
+    size_t cols = matrix.cols();
+    for (auto &&row : matrix.rowwise())
     {
-        for (size_t i = 0; i < rows; i++)
+        for (size_t i = 0; i < cols; i++)
         {
-            std::cout << col(i) << " ";
+            std::cout << row(i) << " ";
         }
         std::cout << std::endl;
     }
@@ -22,11 +22,11 @@ struct PCAEllipsoid
     PCAEllipsoid(const Eigen::MatrixXd &data)
       : sorted_eigenvalues_(data.cols())
       , sorted_egienvectors_(data.cols(), data.cols())
-      , rowwiseMean_(data.colwise().mean())
+      , colwiseMean_(data.colwise().mean())
     {
         size_t ndim = data.cols();
 
-        auto centeredData = data.rowwise() - rowwiseMean_.transpose();
+        auto centeredData = data.rowwise() - colwiseMean_.transpose();
         Eigen::MatrixXd cov = (centeredData.adjoint() * centeredData) / (centeredData.rows() - 1);
 
         Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver{cov};
@@ -52,5 +52,5 @@ struct PCAEllipsoid
 
     Eigen::VectorXd sorted_eigenvalues_;
     Eigen::MatrixXd sorted_egienvectors_;
-    Eigen::VectorXd rowwiseMean_;
+    Eigen::VectorXd colwiseMean_;
 };
