@@ -37,7 +37,7 @@ int main(int argc, char **argv)
 
     desc.add_options()("help", "show help message")("distance", po::value<int>(&distance)->default_value(3),
                                                      "integer grid distance between start and goal")(
-        "obstacle-radius", po::value<double>(&obstacleRadius)->default_value(.35),
+        "obstacle-radius", po::value<double>(&obstacleRadius)->default_value(.45),
         "radius of obstacles")
         ("turning-radius", po::value<double>(&turningRadius)->default_value(.5),
                                "turning radius of robot (ignored for default point robot)")(
@@ -84,8 +84,7 @@ int main(int argc, char **argv)
     
     ss.setPlanner(std::make_shared<og::BIVstar>(ss.getSpaceInformation()));
 
-    if (ss.solve(5)) {
-        std::cout << "!!";
+    if (ss.solve(0.5)) {
         std::ofstream fout{"path.txt"};
         ss.getSolutionPath().printAsMatrix(fout);
     }
