@@ -307,7 +307,7 @@ namespace ompl
         void BIVstar::ImplicitGraph::updateRelation(const VertexPtr &vertex)
         {
             std::vector<std::shared_ptr<Vertex>> climb_set;
-            obsSamples_->nearestR(vertex, r_ / 4, climb_set);
+            obsSamples_->nearestR(vertex, 0.2, climb_set);
 
             if (!climb_set.empty())
             {
@@ -1745,7 +1745,7 @@ namespace ompl
                     auto sample_vertex =
                         std::make_shared<base::ScopedState<>>(spaceInformation_);
                     local_sampler_->sampleUniformNear(sample_vertex->get(), vine_node->state(),
-                                                      r_);
+                                                      r_ / 3);
 
                     if (spaceInformation_->isValid(sample_vertex->get()))
                     {

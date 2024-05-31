@@ -45,14 +45,13 @@
 #include <ompl/tools/benchmark/Benchmark.h>
 #include <ompl/util/String.h>
 
-#include <BIVstar.h>
-
 #include <boost/math/constants/constants.hpp>
 #include <boost/format.hpp>
+#include <string>
+#include "ompl/geometric/planners/informedtrees/BIVstar.h"
 
-unsigned ndim = 6;
-const double edgeWidth = 0.2;
-
+unsigned ndim = 3;
+const double edgeWidth = 0.05;
 // Only states near some edges of a hypercube are valid. The valid edges form a
 // narrow passage from (0,...,0) to (1,...,1). A state s is valid if there exists
 // a k s.t. (a) 0<=s[k]<=1, (b) for all i<k s[i]<=edgeWidth, and (c) for all i>k
@@ -104,7 +103,7 @@ int main(int argc, char **argv)
     }
     ss.setStartAndGoalStates(start, goal);
 
-    constexpr double runtime_limits[] = {1, 5, 10};
+    constexpr double runtime_limits[] = {0.1, 0.5, 1};
 
     // by default, use the Benchmark class
     double memory_limit = 4096;
@@ -124,10 +123,10 @@ int main(int argc, char **argv)
 
     for (auto runtime_limit : runtime_limits)
     {
-        ompl::tools::Benchmark::Request request(runtime_limit, memory_limit, run_count);
-
+        ompl::tools::Benchmark::Request request(runtime_limit, memory_limit, run_count, 0.001);
+        b.addExperimentParameter("num_time_limit", "REAL", std::to_string(runtime_limit));
         b.benchmark(request);
-        b.saveResultsToFile(boost::str(boost::format("hypercube_%i_%.0f.log") % ndim % runtime_limit).c_str());
+        b.saveResultsToFile(boost::str(boost::format("hypercube_%i_%.1f.log") % ndim % runtime_limit).c_str());
     }
 
     return 0;

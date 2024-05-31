@@ -45,13 +45,15 @@
 #include <ompl/tools/benchmark/Benchmark.h>
 #include <ompl/util/String.h>
 
-#include <BIVstar.h>
+#include <ompl/geometric/planners/informedtrees/BIVstar.h>
 
 #include <boost/math/constants/constants.hpp>
 #include <boost/format.hpp>
 
-unsigned ndim = 6;
-const double edgeWidth = 0.1;
+#include <fstream>
+
+unsigned ndim = 3;
+const double edgeWidth = 0.02;
 
 // Only states near some edges of a hypercube are valid. The valid edges form a
 // narrow passage from (0,...,0) to (1,...,1). A state s is valid if there exists
@@ -76,7 +78,7 @@ bool isStateValid(const ompl::base::State *state)
 
 int main(int argc, char **argv)
 {
-    double time = 10;
+    double time = 5;
     if (argc > 1)
         time = std::atof(argv[1]);
 
@@ -109,14 +111,15 @@ int main(int argc, char **argv)
         {
             std::cout << "Found solution:" << std::endl;
             // print the path to screen
-            ss.simplifySolution();
-            ss.getSolutionPath().print(std::cout);
+            //ss.simplifySolution();
+            std::ofstream fout{"path.txt"};
+            ss.getSolutionPath().printAsMatrix(fout);
         }
     }
     if (false)
     {
         auto planner = std::make_shared<ompl::geometric::BITstar>(ss.getSpaceInformation());
-        planner->params().setParam("use_k_nearest", "0"); // 加上这个才是公平的比较
+        //planner->params().setParam("use_k_nearest", "0"); // 加上这个才是公平的比较
         planner->setProblemDefinition(ss.getProblemDefinition());
 
         planner->printProperties(std::cout);
